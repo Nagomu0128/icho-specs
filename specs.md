@@ -58,9 +58,9 @@ flowchart TD
 idIssue[IssueIdAndQrByOperator] --> start[ScanQrAndStart]
 start --> q1_1[Question1-1Release]
 start --> q1_2[Question1-2Release]
-q1_1 --> q1Gate[Q1BothCleared]
-q1_2 --> q1Gate
-q1Gate --> q2[Question2KeyTransform]
+q1_1 --> q1[Q1Unlocked]
+q1_2 --> q1[Q1Unlocked]
+q1 --> q2[Question2KeyTransform]
 q2 --> q3[Question3KeywordAndCode]
 q3 --> q4[Question4ConstantAuth]
 q4 --> fakeEnd[FakeHappyEnd]
