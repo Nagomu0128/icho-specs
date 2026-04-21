@@ -56,14 +56,17 @@ reviewer: [塩見文梨](mailto:shiomi.ayari@gmail.com) / [いたこす](mailto:
 ```mermaid
 flowchart TD
 idIssue[IssueIdAndQrByOperator] --> start[ScanQrAndStart]
-start --> q1[Question1DoubleLock]
-q1 --> q2[Question2KeyTransform]
+start --> q1_1[Question1-1Release]
+start --> q1_2[Question1-2Release]
+q1_1 --> q1Gate[Q1BothCleared]
+q1_2 --> q1Gate
+q1Gate --> q2[Question2KeyTransform]
 q2 --> q3[Question3KeywordAndCode]
 q3 --> q4[Question4ConstantAuth]
 q4 --> fakeEnd[FakeHappyEnd]
 fakeEnd --> complete[CompleteScreen]
-report --> reward[RewardFromOperator]
 complete --> report[ReportToOperator]
+report --> reward[RewardFromOperator]
 complete --> epilogue[Epilogue]
 complete --> explain[GimmickExplanation]
 ```
@@ -256,4 +259,3 @@ complete --> explain[GimmickExplanation]
 
 1. Q1の具体周波数・閾値・平滑化係数（端末検証結果を踏まえて決定）  
 2. complete画面の技術解説文面（一般向けと詳細向けの最終原稿）  
-3. フォールバックQRの配布形式（固定掲示/スタッフ携行）の最終決定
