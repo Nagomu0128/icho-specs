@@ -1,0 +1,632 @@
+# 技術仕様書: いちょう祭ストーリー進行型謎解きゲーム
+
+author: nagomu  
+status: draft  
+updatedAt: 2026.04.21
+
+---
+
+## 1. 目的と前提
+
+本書は `specs.md` を実装可能な技術仕様に落とし込むための設計書である。  
+対象はモバイルブラウザ中心の来場者体験と、当日運営のオペレーション機能。
+
+採用前提:
+- ランタイム: Cloudflare Workers
+- Webフレームワーク: React Router Framework Mode
+- 言語: TypeScript
+- データ基盤: Cloudflare D1（正データ） + Cloudflare KV（表示最適化キャッシュ）
+- AIチャット: 初期はモック（定型ヒント）
+- ARダウジング: 初期はモックUI
+- 運営認証: salt + PBKDF2反復ハッシュ
+
+---
+
+## 2. システムアーキテクチャ
+
+### 2.1 全体構成
+
+```mermaid
+flowchart TD
+mobileClient[ParticipantMobileWeb] --> rrWorker[ReactRouterFrameworkModeOnWorkers]
+operatorClient[OperatorMobileOrPCWeb] --> rrWorker
+rrWorker --> d1Main[(D1_MainData)]
+rrWorker --> kvView[(KV_ViewCache)]
+rrWorker --> hintMock[MockHintService]
+rrWorker --> arMock[MockArUiState]
+```
+
+責務:
+- React Router:
+  - 画面ルーティング（参加者導線/運営導線）
+  - `loader` でデータ取得、`action` で状態更新
+- Workers:
+  - 入力正規化、正答判定、状態遷移検証
+  - 認証・セッション発行
+- D1:
+  - 進捗と監査の唯一の正データソース
+- KV:
+  - ダッシュボード等の参照高速化キャッシュ
+  - 正答判定や状態遷移の根拠には使わない
+
+### 2.2 設計原則
+
+- すべての進行判定はサーバ側で行う。
+- URL直アクセス防止は「画面表示制御」ではなく「サーバ状態遷移検証」で担保する。
+- Q1順序は初回開始時に確定し、再開時も同一順序を必ず使用する。
+- KVミス時は必ずD1フォールバックする。
+
+### 2.3 主要データフロー
+
+1. 参加者が開始URLへアクセス。`users` レコード作成または再開。  
+2. Q1開始時に `q1_order` をランダム決定し保存。  
+3. 回答送信時に `attempt_logs` を記録。正解時は進捗更新。  
+4. NFC/フォールバックQR完了通知で設問完了を確定。  
+5. 進捗変更時、該当グループのKVキャッシュを削除。  
+6. 運営ダッシュボード参照時、KV→D1フォールバック→KV再構築。
+
+---
+
+## 3. 画面/ルーティング仕様（React Router）
+
+### 3.1 参加者ルート
+
+- `GET /start/:groupId`
+  - セッション開始・再開
+  - Q1順序が未設定なら割当実行
+- `GET /q1/1-1`
+- `GET /q1/1-2`
+- `POST /q1/:subQuestion/answer`
+- `POST /q1/:subQuestion/checkpoint`（NFC/QR到達確定）
+- `GET /q2`
+- `POST /q2/answer`
+- `POST /q2/checkpoint`
+- `GET /q3`
+- `POST /q3/keyword`
+- `POST /q3/code`
+- `GET /q4`
+- `POST /q4/answer`
+- `GET /fake-end`
+- `GET /complete`
+- `POST /complete/epilogue-viewed`
+
+### 3.2 運営ルート
+
+- `GET /operator/login`
+- `POST /operator/login`
+- `POST /operator/logout`
+- `GET /operator/dashboard`
+- `GET /operator/group/:groupId`
+- `POST /operator/group/:groupId/status-correction`
+- `POST /operator/group/:groupId/mark-reported`
+
+### 3.3 ルートガード
+
+- 参加者導線:
+  - すべて `groupId` 単位で現在ステータスを検証
+  - 未解放ページは `409 CONFLICT_STATE` を返す
+- 運営導線:
+  - セッションCookie必須
+  - 未認証時は `401` またはログイン画面へリダイレクト
+
+---
+
+## 4. API入出力定義
+
+共通ヘッダー:
+- `Content-Type: application/json`
+- `X-Request-Id`（クライアント送信可。未指定ならサーバ生成）
+
+共通エラーレスポンス:
+```json
+{
+  "error": {
+    "code": "CONFLICT_STATE",
+    "message": "Current progress does not allow this operation.",
+    "requestId": "req_xxx"
+  }
+}
+```
+
+エラーコード:
+- `BAD_REQUEST`
+- `UNAUTHORIZED`
+- `FORBIDDEN`
+- `NOT_FOUND`
+- `CONFLICT_STATE`
+- `TOO_MANY_REQUESTS`
+- `INTERNAL_ERROR`
+
+### 4.1 開始/再開
+
+`GET /api/v1/session/start/:groupId`
+
+レスポンス:
+```json
+{
+  "groupId": "g_xxxx",
+  "currentStage": "Q1",
+  "q1Order": "Q1_1_FIRST",
+  "currentUnlockedSubQuestion": "Q1_1",
+  "resumeTokenIssued": true
+}
+```
+
+処理:
+- 初回アクセス: `q1Order` をサーバでランダム確定
+- 再開アクセス: 既存 `q1Order` を返却（再抽選しない）
+
+### 4.2 Q1回答送信
+
+`POST /api/v1/q1/:subQuestion/answer`
+
+リクエスト:
+```json
+{
+  "answerRaw": "  029 ",
+  "clientTs": "2026-04-21T11:25:10.120Z"
+}
+```
+
+レスポンス:
+```json
+{
+  "subQuestion": "Q1_1",
+  "isCorrect": true,
+  "normalizedAnswer": "29",
+  "nextAction": "REQUIRE_CHECKPOINT"
+}
+```
+
+バリデーション:
+- `subQuestion`: `Q1_1` or `Q1_2`
+- 現在解放中サブ設問と一致しない場合 `CONFLICT_STATE`
+
+### 4.3 Q1チェックポイント確定（NFC/QR）
+
+`POST /api/v1/q1/:subQuestion/checkpoint`
+
+リクエスト:
+```json
+{
+  "method": "NFC",
+  "checkpointCode": "cp_q1_1_a"
+}
+```
+
+レスポンス:
+```json
+{
+  "subQuestion": "Q1_1",
+  "checkpointCompleted": true,
+  "q1OverallCompleted": false,
+  "currentUnlockedSubQuestion": "Q1_2",
+  "nextStage": "Q1"
+}
+```
+
+補足:
+- `method`: `NFC` or `FALLBACK_QR`
+- 2つ目サブ設問まで完了した時点で `nextStage: Q2`
+
+### 4.4 Q2/Q3/Q4回答系（共通）
+
+`POST /api/v1/:stage/answer`（`stage` は `q2|q3|q4`）
+
+レスポンス共通:
+```json
+{
+  "stage": "Q2",
+  "isCorrect": true,
+  "nextStage": "Q3",
+  "requiresCheckpoint": true
+}
+```
+
+Q3は2段階:
+- `POST /api/v1/q3/keyword`
+- `POST /api/v1/q3/code`
+
+### 4.5 参加者進捗取得
+
+`GET /api/v1/progress`
+
+レスポンス:
+```json
+{
+  "groupId": "g_xxxx",
+  "currentStage": "Q3_CODE",
+  "q1Order": "Q1_2_FIRST",
+  "completed": {
+    "q1_1": true,
+    "q1_2": true,
+    "q2": true,
+    "q3Keyword": true,
+    "q3Code": false,
+    "q4": false
+  }
+}
+```
+
+### 4.6 運営ログイン
+
+`POST /api/v1/operator/login`
+
+リクエスト:
+```json
+{
+  "password": "plain_text_input"
+}
+```
+
+レスポンス:
+```json
+{
+  "authenticated": true
+}
+```
+
+補足:
+- サーバでPBKDF2ハッシュ比較
+- 成功時 `operator_session` Cookie発行
+
+### 4.7 運営ダッシュボード一覧
+
+`GET /api/v1/operator/dashboard?cursor=...&limit=50`
+
+レスポンス:
+```json
+{
+  "items": [
+    {
+      "groupId": "g_xxxx",
+      "currentStage": "Q2",
+      "attemptCountTotal": 7,
+      "hintCountTotal": 2,
+      "updatedAt": "2026-04-21T11:30:00.000Z"
+    }
+  ],
+  "nextCursor": "..."
+}
+```
+
+### 4.8 運営ステータス補正
+
+`POST /api/v1/operator/group/:groupId/status-correction`
+
+リクエスト:
+```json
+{
+  "fromStage": "Q2",
+  "toStage": "Q3",
+  "reasonCode": "OP_RESCUE",
+  "note": "NFC端末不調のため手動補正"
+}
+```
+
+レスポンス:
+```json
+{
+  "updated": true,
+  "currentStage": "Q3"
+}
+```
+
+---
+
+## 5. D1データベース設計
+
+### 5.1 テーブル一覧
+
+- `users`
+- `user_progress_logs`
+- `attempt_logs`
+- `hint_logs`
+- `operator_actions`
+- `operator_credentials`
+- `operator_sessions`
+
+### 5.2 進捗状態モデル
+
+- `users.current_stage`
+  - `START | Q1 | Q2 | Q3_KEYWORD | Q3_CODE | Q4 | FAKE_END | COMPLETE`
+- `users.q1_order`
+  - `Q1_1_FIRST | Q1_2_FIRST`
+- `users.current_unlocked_subquestion`
+  - `Q1_1 | Q1_2 | NULL`
+
+### 5.3 DDL
+
+```sql
+CREATE TABLE IF NOT EXISTS users (
+  group_id TEXT PRIMARY KEY,
+  current_stage TEXT NOT NULL DEFAULT 'START',
+  q1_order TEXT,
+  current_unlocked_subquestion TEXT,
+  q1_1_answer_correct INTEGER NOT NULL DEFAULT 0,
+  q1_1_checkpoint_done INTEGER NOT NULL DEFAULT 0,
+  q1_2_answer_correct INTEGER NOT NULL DEFAULT 0,
+  q1_2_checkpoint_done INTEGER NOT NULL DEFAULT 0,
+  q2_answer_correct INTEGER NOT NULL DEFAULT 0,
+  q2_checkpoint_done INTEGER NOT NULL DEFAULT 0,
+  q3_keyword_correct INTEGER NOT NULL DEFAULT 0,
+  q3_code_correct INTEGER NOT NULL DEFAULT 0,
+  q4_answer_correct INTEGER NOT NULL DEFAULT 0,
+  fake_end_shown INTEGER NOT NULL DEFAULT 0,
+  reported INTEGER NOT NULL DEFAULT 0,
+  epilogue_viewed INTEGER NOT NULL DEFAULT 0,
+  started_at TEXT,
+  completed_at TEXT,
+  reported_at TEXT,
+  epilogue_viewed_at TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  CHECK (q1_order IN ('Q1_1_FIRST', 'Q1_2_FIRST') OR q1_order IS NULL),
+  CHECK (current_unlocked_subquestion IN ('Q1_1', 'Q1_2') OR current_unlocked_subquestion IS NULL)
+);
+
+CREATE TABLE IF NOT EXISTS user_progress_logs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  group_id TEXT NOT NULL,
+  event_type TEXT NOT NULL,
+  from_stage TEXT,
+  to_stage TEXT,
+  metadata_json TEXT,
+  created_at TEXT NOT NULL,
+  FOREIGN KEY(group_id) REFERENCES users(group_id)
+);
+
+CREATE TABLE IF NOT EXISTS attempt_logs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  group_id TEXT NOT NULL,
+  stage TEXT NOT NULL,
+  input_raw TEXT,
+  input_normalized TEXT,
+  is_correct INTEGER NOT NULL,
+  created_at TEXT NOT NULL,
+  FOREIGN KEY(group_id) REFERENCES users(group_id)
+);
+
+CREATE TABLE IF NOT EXISTS hint_logs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  group_id TEXT NOT NULL,
+  stage TEXT NOT NULL,
+  hint_level INTEGER NOT NULL,
+  user_message TEXT NOT NULL,
+  assistant_message TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  FOREIGN KEY(group_id) REFERENCES users(group_id)
+);
+
+CREATE TABLE IF NOT EXISTS operator_actions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  operator_id TEXT NOT NULL,
+  group_id TEXT NOT NULL,
+  action_type TEXT NOT NULL,
+  reason_code TEXT,
+  before_state_json TEXT,
+  after_state_json TEXT,
+  note TEXT,
+  created_at TEXT NOT NULL,
+  FOREIGN KEY(group_id) REFERENCES users(group_id)
+);
+
+CREATE TABLE IF NOT EXISTS operator_credentials (
+  operator_id TEXT PRIMARY KEY,
+  password_hash_b64 TEXT NOT NULL,
+  salt_b64 TEXT NOT NULL,
+  iterations INTEGER NOT NULL,
+  hash_algo TEXT NOT NULL DEFAULT 'PBKDF2-SHA256',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS operator_sessions (
+  session_id TEXT PRIMARY KEY,
+  operator_id TEXT NOT NULL,
+  expires_at TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_users_current_stage ON users(current_stage);
+CREATE INDEX IF NOT EXISTS idx_users_updated_at ON users(updated_at);
+CREATE INDEX IF NOT EXISTS idx_progress_group_created ON user_progress_logs(group_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_attempt_group_stage_created ON attempt_logs(group_id, stage, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_hint_group_stage_created ON hint_logs(group_id, stage, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_operator_actions_group_created ON operator_actions(group_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_operator_sessions_expires ON operator_sessions(expires_at);
+```
+
+### 5.4 Q1順序割当ロジック
+
+擬似コード:
+```ts
+if (!user.q1_order) {
+  const order = cryptoRandomBool() ? "Q1_1_FIRST" : "Q1_2_FIRST";
+  user.q1_order = order;
+  user.current_unlocked_subquestion = order === "Q1_1_FIRST" ? "Q1_1" : "Q1_2";
+  save(user);
+}
+```
+
+---
+
+## 6. KV設計（参照最適化）
+
+### 6.1 用途
+
+- 運営ダッシュボード一覧キャッシュ
+- グループ詳細の短期キャッシュ
+- ルックアップ設定（チェックポイント設定など）
+
+### 6.2 キー命名
+
+- `dash:list:v1:{cursor}:{limit}`
+- `dash:group:v1:{groupId}`
+- `cfg:checkpoint:v1:{checkpointCode}`
+
+### 6.3 TTL
+
+- ダッシュボード一覧: 15秒
+- グループ詳細: 10秒
+- 固定設定値: 10分
+
+### 6.4 無効化戦略
+
+以下イベントで `dash:*` を削除:
+- 進捗更新（回答正解、チェックポイント完了、ステージ遷移）
+- 運営手動補正
+- 報告済み更新
+
+補足:
+- 削除失敗時も処理継続（最悪TTLで自然回復）
+
+---
+
+## 7. セキュリティ/認証仕様
+
+### 7.1 運営認証（PBKDF2）
+
+- 入力パスワードを `PBKDF2-SHA256` で導出し保存ハッシュと比較
+- パラメータ:
+  - salt長: 16byte以上
+  - 反復回数: 210000（初期値、ベンチ後調整可）
+  - 生成鍵長: 32byte
+- 比較はタイミング攻撃耐性を考慮した一定時間比較
+
+### 7.2 セッション
+
+- Cookie名: `operator_session`
+- 属性:
+  - `HttpOnly`
+  - `Secure`
+  - `SameSite=Strict`
+  - `Path=/operator`
+- 有効期限: 12時間
+- サーバ側セッションは `operator_sessions` に保存
+
+### 7.3 参加者保護
+
+- `groupId` は推測困難ランダム文字列
+- サーバ側状態遷移検証を必須化
+- レート制限（同一IP/同一groupId）:
+  - 回答API: 1秒あたり5リクエスト
+  - ログインAPI: 1分あたり5回
+
+### 7.4 入力正規化/検証
+
+- 前後空白除去
+- 全角英数 -> 半角
+- 英字小文字化
+- 整数ゼロ埋め同値化
+
+---
+
+## 8. 使用ライブラリ
+
+- `react`
+  - UI構築
+- `react-router`
+  - Framework Modeルーティング、loader/action
+- `zod`
+  - API入力検証と型安全
+- `drizzle-orm`
+  - D1向け型安全クエリ
+- `drizzle-kit`
+  - マイグレーション生成
+- `nanoid`
+  - セッションID・リクエストID生成
+- `itty-router-rate-limit`（または同等軽量実装）
+  - Workers上の簡易レート制限
+- `@cloudflare/workers-types`
+  - Workers環境のTypeScript型
+
+注記:
+- Node.js依存の重いネイティブライブラリは避ける。
+- Workers互換性を前提に選定する。
+
+---
+
+## 9. モバイル最適化・非機能要件
+
+### 9.1 性能目標
+
+- 主要画面初回表示（4G相当）: p95 2.5秒以内
+- 回答送信API: p95 600ms以内
+- ダッシュボード取得: p95 800ms以内
+
+### 9.2 UX目標（モバイル）
+
+- 画面は縦持ち最適化（タップ領域 44px 以上）
+- 入力欄は自動フォーカスとキーボード種別最適化
+- 低速回線時はローディング/再送導線を明示
+- NFC非対応時は即時にフォールバックQR導線表示
+
+### 9.3 可用性
+
+- Workers障害時のフォールバック文言表示
+- 一時失敗時の指数バックオフ再試行（最大2回）
+- 監視指標:
+  - APIエラー率
+  - stage滞留時間
+  - ログイン失敗率
+
+### 9.4 ログ方針
+
+- `attempt_logs`: すべての回答送信を記録
+- `hint_logs`: モック応答を含め全文記録
+- `user_progress_logs`: 解放/完了/遷移イベントを記録
+- `operator_actions`: 手動補正・報告済み更新を監査記録
+
+---
+
+## 10. デプロイ仕様（Cloudflare）
+
+### 10.1 Workersバインディング
+
+- `DB`（D1）
+- `CACHE`（KV）
+- `ENV`（環境名）
+
+### 10.2 環境変数/シークレット
+
+- `OPERATOR_PASSWORD_HASH_B64`（初期運用で必要なら）
+- `OPERATOR_PASSWORD_SALT_B64`
+- `OPERATOR_PASSWORD_ITERATIONS`
+- `SESSION_SIGNING_KEY`
+- `RATE_LIMIT_SECRET`
+
+### 10.3 デプロイフロー
+
+1. D1マイグレーション適用  
+2. Workersデプロイ  
+3. KV初期設定投入  
+4. 運営認証の疎通確認  
+5. Q1順序固定シナリオのE2E確認
+
+---
+
+## 11. 将来拡張ポイント
+
+### 11.1 AIモック -> 実LLM
+
+- `HintService` インターフェースを境界として差し替え
+- 追加時に `hint_logs` スキーマ変更不要
+
+### 11.2 ARモック -> 本実装
+
+- `ArGuidanceService` をモック実装で先行作成
+- 本実装時にマイク入力と帯域解析を追加
+- 権限要求はQ1開始後に限定して実施
+
+---
+
+## 12. 受け入れチェックリスト（技術）
+
+- Q1順序が初回にランダム決定され、再開時に固定維持される
+- 未解放URL直アクセス時に `CONFLICT_STATE` を返す
+- Q1の2サブ設問完了でのみQ2解放される
+- D1停止時の障害レスポンスが定義どおり返る
+- 運営認証がPBKDF2で検証される
+- モバイル実機で主要導線が操作可能
+
