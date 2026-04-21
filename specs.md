@@ -56,10 +56,13 @@ reviewer: [塩見文梨](mailto:shiomi.ayari@gmail.com) / [いたこす](mailto:
 ```mermaid
 flowchart TD
 idIssue[IssueIdAndQrByOperator] --> start[ScanQrAndStart]
-start --> q1_1[Question1-1Release]
-start --> q1_2[Question1-2Release]
-q1_1 --> q1[Q1Unlocked]
-q1_2 --> q1[Q1Unlocked]
+start --> q1_order{Q1SubOrderRandomized}
+q1_order --> q1_1_first[Question1-1First]
+q1_order --> q1_2_first[Question1-2First]
+q1_1_first --> q1_2_second[Question1-2Second]
+q1_2_first --> q1_1_second[Question1-1Second]
+q1_2_second --> q1[Q1Unlocked]
+q1_1_second --> q1[Q1Unlocked]
 q1 --> q2[Question2KeyTransform]
 q2 --> q3[Question3KeywordAndCode]
 q3 --> q4[Question4ConstantAuth]
@@ -73,7 +76,7 @@ complete --> explain[GimmickExplanation]
 
 1. 運営が来場者グループにID付きQR社員証を配布
 2. 来場者がQRを読み取り、開始画面からQ1へ進む
-3. Q1〜Q4を順番に解いて進行
+3. Q1は参加者ごとに割り当てられた順序（1-1→1-2 または 1-2→1-1）で解き、Q2〜Q4へ進行
 4. Q4後に偽ハッピーエンドを表示
 5. エンド表示後complete画面を表示
 6. complete画面は, 報告ページを開くリンク, エピローグを表示するリンク, ギミック解説をするリンクを持つ
@@ -84,6 +87,7 @@ complete --> explain[GimmickExplanation]
 
 - ログイン不要。QRリンクに含まれるIDでセッションを識別する。
 - 問題は順序ロックされ、未解放問題URLに直接アクセスしても遷移できない。
+- Q1内サブ設問（1-1/1-2）の解答順は参加者ごとにランダム割り当てされる。
 - 途中離脱後に同一IDで再アクセスした際、前回進捗から再開できる。
 - 正解時は進捗ログを記録し、次の問題を解放する。
 - 不正解時は回数を記録し、問題文再表示とヒント導線を提示する。
@@ -96,7 +100,10 @@ complete --> explain[GimmickExplanation]
 
 - 1-1: 連立方程式を解いておおよその位置を特定する。
 - 1-2: パズル問題を解いておおよその位置を特定する。
-- 1-1/1-2の両方クリアでQ1クリアとみなす。
+- Q1開始時に参加者ごとに解答順をランダム割り当てする（`1-1 -> 1-2` または `1-2 -> 1-1`）。
+- 先に割り当てられた設問のみを解放し、未解放側URLへの直接アクセスは拒否する。
+- 先行設問の完了後に後続設問を解放する。
+- 1-1/1-2の両方クリアでQ1クリアとみなし、Q2を解放する。
 - 各設問はARダウジングで詳細位置を特定し、対応NFCタッチで完了する。
 - 端末がNFC非対応またはNFC読取に失敗した場合、同一地点に設置したフォールバックQR読み取りで完了扱いにする。
 - 1-1/1-2の音源は別周波数（可聴域以上）を使い、受信側で帯域分離して混線を防ぐ。
@@ -106,8 +113,10 @@ complete --> explain[GimmickExplanation]
 
 #### 6.2.2 受け入れ条件（Given/When/Then）
 
-- Given Q1開始状態, When 1-1のみ完了, Then Q1は未クリアのままで1-2を要求する。  
-- Given 1-1と1-2が完了, When 判定処理が走る, Then Q2が解放される。  
+- Given Q1開始状態, When 順序割り当てが実行される, Then `1-1 -> 1-2` または `1-2 -> 1-1` のいずれか一方が設定される。  
+- Given Q1開始直後, When 未解放側URLへ直接アクセス, Then 順序ロックにより遷移できない。  
+- Given 先行設問が完了, When 判定処理が走る, Then 後続設問が解放される。  
+- Given 1-1と1-2が完了, When 判定処理が走る, Then 割り当て順序に関わらずQ2が解放される。  
 - Given NFC未タッチかつフォールバックQR未読取, When 回答のみ送信, Then 設問完了にならない。  
 - Given Q1完了, When 完了演出を表示, Then 「NFC機能解放」メッセージを表示する。
 - Given 音源接近中, When 接近度が上がる, Then 点滅またはメーター値が単調に強まる。
