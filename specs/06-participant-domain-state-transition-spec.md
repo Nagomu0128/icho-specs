@@ -6,7 +6,7 @@
 
 ## 1. 対象関数
 
-`src/domain/progress/state-machine.ts` に以下を実装する。
+`app/modules/progress/domain/state-machine.ts` に以下を実装する。
 
 - `startOrResumeSession(user)`
 - `submitQ1Answer(user, subQuestion, normalizedAnswer)`
@@ -20,7 +20,7 @@
 
 ## 2. 入力正規化
 
-`src/domain/progress/answer-normalizer.ts`:
+`app/modules/progress/domain/answer-normalizer.ts`:
 
 - 前後空白除去
 - 全角英数を半角
@@ -54,7 +54,7 @@
 
 ## 5. 判定関数分離
 
-`src/domain/progress/answer-judge.ts`:
+`app/modules/progress/domain/answer-judge.ts`:
 
 - `isQ1AnswerCorrect(subQuestion, normalizedAnswer)`
 - `isQ2AnswerCorrect(normalizedAnswer)`

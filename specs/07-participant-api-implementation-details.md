@@ -35,13 +35,17 @@ Q3 API方針:
 
 ## 3. UseCase分割
 
-`src/application/usecases/participant/`:
+`app/modules/progress/application/usecases/`:
 
 - `start-session.usecase.ts`
 - `submit-answer.usecase.ts`（stage別内部分岐）
 - `confirm-checkpoint.usecase.ts`
 - `get-progress.usecase.ts`
 - `mark-epilogue-viewed.usecase.ts`
+
+補足:
+- actor軸（participant/operator）でディレクトリ分割しない。
+- 認可は `app/modules/progress/authorization/policies.ts` をusecaseから呼び出して判定する。
 
 ## 4. 冪等制御
 

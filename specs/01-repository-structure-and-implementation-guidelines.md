@@ -18,12 +18,11 @@
 
 ```text
 icho26/
-  app/                         # React Router routes / loaders / actions
-  src/
-    domain/                    # 純粋関数: 状態遷移・正規化・判定
-    application/               # UseCase / Port(interface)
-    infrastructure/            # D1/KV/外部サービス実装
-    shared/                    # 共通型・Result・エラー
+  app/
+    routes/                    # React Router routes / loaders / actions
+    modules/                   # Feature単位（progress, operator-session, ...）
+    shared/                    # 横断的ports / infra / schemas / result / errors
+    composition.server.ts      # DIコンポジションルート
   workers/
     bindings/                  # Env型・Binding取得ヘルパ
     middleware/                # 認証・requestId
@@ -49,17 +48,19 @@ icho26/
 
 ## 3. 実装レイヤ責務
 
-- `app/`
-  - HTTPの入出力、画面遷移、`loader`/`action`
-  - バリデーション呼び出しとUseCase呼び出しのみ
-- `src/domain/`
-  - ステージ遷移、回答正規化、正答判定
-  - I/Oを持たない純粋関数
-- `src/application/`
-  - トランザクション境界、冪等制御、権限判定
-  - Repository interface(Port)を定義
-- `src/infrastructure/`
-  - D1/KVアクセス、SQL、Cloudflareバインディング依存コード
+- `app/routes/`
+  - HTTP入出力、`loader`/`action`
+  - zod検証、usecase呼び出し、レスポンス整形のみ
+- `app/modules/<feature>/domain/`
+  - ステージ遷移、回答正規化、正答判定、ドメインエラー
+  - I/Oを持たない純粋ロジック
+- `app/modules/<feature>/application/`
+  - usecase、認可呼び出し、トランザクション境界
+  - portsを `driving` / `driven` に分離
+- `app/modules/<feature>/infrastructure/`
+  - D1/KVなど技術依存実装（`*.d1.server.ts`, `*.kv.server.ts`）
+- `app/shared/`
+  - 横断ports、Result、共通エラー、共通スキーマ
 
 ## 4. 命名規約
 
@@ -69,7 +70,7 @@ icho26/
 - API DTO: `XxxRequest` / `XxxResponse`
 - UseCase: `verb-target.usecase.ts`
 - Repository Port: `xxx-repository.port.ts`
-- Infrastructure実装: `d1-xxx.repository.ts` / `kv-xxx.cache.ts`
+- Infrastructure実装: `*.d1.server.ts` / `*.kv.server.ts` / `*.server.ts`
 
 ## 5. エラー標準化
 

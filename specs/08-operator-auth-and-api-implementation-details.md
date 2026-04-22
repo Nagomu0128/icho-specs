@@ -13,6 +13,15 @@
 - `POST /api/v1/operator/group/:groupId/status-correction`
 - `POST /api/v1/operator/group/:groupId/mark-reported`
 
+UseCase配置方針:
+- 進捗更新系（`status-correction`, `mark-reported`）は `app/modules/progress/application/usecases/` に配置する
+- セッション系（`login`, `logout`, session検証）は `app/modules/operator-session/application/usecases/` に配置する
+- actor名（operator）をディレクトリ分割の軸にしない。認可は各usecase内でRBACポリシー評価する
+
+認可モデル:
+- roleは `participant` / `operator` の2値を採用する
+- 運営APIは `operator` role を必須とし、未充足時は `FORBIDDEN`（403）を返す
+
 ## 2. PBKDF2検証
 
 - アルゴリズム: `PBKDF2-SHA256`

@@ -65,13 +65,13 @@ db/schema/
 
 ## 5. Repository実装要件
 
-`src/infrastructure/d1/` に以下を作成。
+`app/modules/*/infrastructure/` に以下を作成（責務ごとに配置）。
 
-- `d1-progress.repository.ts`
-- `d1-idempotency.repository.ts`
-- `d1-operator-session.repository.ts`
-- `d1-operator-credential.repository.ts`
-- `d1-transaction.ts`
+- `app/modules/progress/infrastructure/progress-repository.d1.server.ts`
+- `app/modules/progress/infrastructure/idempotency-repository.d1.server.ts`
+- `app/modules/operator-session/infrastructure/operator-session-repository.d1.server.ts`
+- `app/modules/operator-session/infrastructure/operator-credential-repository.d1.server.ts`
+- `app/modules/progress/infrastructure/progress-transaction.d1.server.ts`
 
 ## 6. トランザクションの実装規約
 
