@@ -29,7 +29,7 @@ app/
           submit-answer.usecase.ts
       infrastructure/
         progress-repository.d1.server.ts
-        idempotency-repository.kv.server.ts
+        idempotency-repository.d1.server.ts
       authorization/
         policies.ts
     operator-session/
