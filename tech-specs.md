@@ -2,7 +2,7 @@
 
 author: nagomu  
 status: draft  
-updatedAt: 2026.04.21
+updatedAt: 2026.04.22
 
 ---
 
@@ -30,7 +30,7 @@ updatedAt: 2026.04.21
 flowchart TD
 mobileClient[ParticipantMobileWeb] --> rrWorker[ReactRouterFrameworkModeOnWorkers]
 operatorClient[OperatorMobileOrPCWeb] --> rrWorker
-rrWorker --> d1Main[(D1_MainData)]
+rrWorker --> d1Main
 rrWorker --> kvView[(KV_ViewCache)]
 rrWorker --> hintMock[MockHintService]
 rrWorker --> arMock[MockArUiState]
@@ -45,6 +45,8 @@ rrWorker --> arMock[MockArUiState]
   - 認証・セッション発行
 - D1:
   - 進捗と監査の唯一の正データソース
+  - `state_version` による楽観ロックとトランザクションで更新競合を制御
+  - `idempotency_keys` による重複リクエストの抑止
 - KV:
   - ダッシュボード等の参照高速化キャッシュ
   - 正答判定や状態遷移の根拠には使わない
@@ -54,16 +56,34 @@ rrWorker --> arMock[MockArUiState]
 - すべての進行判定はサーバ側で行う。
 - URL直アクセス防止は「画面表示制御」ではなく「サーバ状態遷移検証」で担保する。
 - Q1順序は初回開始時に確定し、再開時も同一順序を必ず使用する。
+- 同一 `groupId` の更新系APIは D1 トランザクション + `state_version` 条件付き更新で整合性を担保する。
+- 進捗の正データはD1のみ。KVは再構築可能な派生状態として扱う。
 - KVミス時は必ずD1フォールバックする。
 
 ### 2.3 主要データフロー
 
 1. 参加者が開始URLへアクセス。`users` レコード作成または再開。  
-2. Q1開始時に `q1_order` をランダム決定し保存。  
-3. 回答送信時に `attempt_logs` を記録。正解時は進捗更新。  
-4. NFC/フォールバックQR完了通知で設問完了を確定。  
-5. 進捗変更時、該当グループのKVキャッシュを削除。  
-6. 運営ダッシュボード参照時、KV→D1フォールバック→KV再構築。
+2. 参加者の更新系API（回答・checkpoint）はWorkersで `X-Idempotency-Key` を検証。重複なら前回結果を返却。  
+3. Workersが状態遷移を検証し、D1トランザクションで `users` 更新と監査ログ書き込みを同時に実行（`users.state_version` をインクリメント）。  
+4. 運営手動補正も同様にD1へ `state_version` 条件付きで反映し、`operator_actions` を記録。  
+5. 更新失敗（競合）時は `409 CONFLICT_STATE` を返し、クライアントは最新進捗再取得後に再送する。  
+6. 進捗変更時、`dash:version:v1` をインクリメントしてダッシュボードキャッシュを世代更新。  
+7. 運営ダッシュボード参照時、KV（世代付きキー）→D1フォールバック→KV再構築。
+
+### 2.4 D1 / KV の採用方針
+
+- D1（正データ）:
+  - 永続化が必要なすべての業務データ（進捗、監査、回答ログ、運営操作ログ）
+  - 運営セッション正データ（`operator_sessions`）とセッション監査イベントの保持
+  - 障害復旧時の再計算・監査証跡の起点
+  - 更新競合は `state_version` 楽観ロック + `idempotency_keys` で吸収
+- KV（参照最適化 + セッションキャッシュ）:
+  - ダッシュボード向け短TTLキャッシュと固定設定値
+  - 運営セッションの読み取りキャッシュ（正データはD1）
+  - ダッシュボードは世代管理キーで論理無効化する
+  
+補足（将来拡張）:
+- 同時接続増加や競合率上昇で必要になった場合のみ、更新系APIにDurable Objectsを追加する。
 
 ---
 
@@ -116,6 +136,7 @@ rrWorker --> arMock[MockArUiState]
 共通ヘッダー:
 - `Content-Type: application/json`
 - `X-Request-Id`（クライアント送信可。未指定ならサーバ生成）
+- `X-Idempotency-Key`（`groupId` を伴う更新系APIで必須。30日間は同一キー再利用禁止）
 
 共通エラーレスポンス:
 ```json
@@ -181,6 +202,7 @@ rrWorker --> arMock[MockArUiState]
 バリデーション:
 - `subQuestion`: `Q1_1` or `Q1_2`
 - 現在解放中サブ設問と一致しない場合 `CONFLICT_STATE`
+- 同一 `X-Idempotency-Key` 再送時は、前回レスポンスをそのまま返却
 
 ### 4.3 Q1チェックポイント確定（NFC/QR）
 
@@ -269,6 +291,8 @@ Q3は2段階:
 補足:
 - サーバでPBKDF2ハッシュ比較
 - 成功時 `operator_session` Cookie発行
+- D1 `operator_sessions` に必ずINSERTし、KVへはキャッシュとして保存
+- D1 `operator_session_events` に `LOGIN_SUCCESS` を記録
 
 ### 4.7 運営ダッシュボード一覧
 
@@ -312,6 +336,42 @@ Q3は2段階:
 }
 ```
 
+### 4.9 更新系APIの整合性ルール
+
+以下はすべて、Workersでの遷移検証後にD1トランザクションで更新する。
+
+- `POST /api/v1/q1/:subQuestion/answer`
+- `POST /api/v1/q1/:subQuestion/checkpoint`
+- `POST /api/v1/q2/answer`
+- `POST /api/v1/q2/checkpoint`
+- `POST /api/v1/q3/keyword`
+- `POST /api/v1/q3/code`
+- `POST /api/v1/q4/answer`
+- `POST /api/v1/complete/epilogue-viewed`
+
+補足:
+- 上記更新系APIは `X-Idempotency-Key` 必須。
+- `idempotency_keys` で同一キー重複を判定し、重複時は初回レスポンスを返却。
+- D1反映後に `dash:version:v1` をインクリメントし、世代切替でキャッシュを論理無効化する。
+- `POST /api/v1/operator/group/:groupId/status-correction` と `POST /api/v1/operator/group/:groupId/mark-reported` はWorkersからD1へ `state_version` 条件付き更新を必須とする。
+- `POST /api/v1/operator/login` と `POST /api/v1/operator/logout` は `groupId` を持たないため本ルールの対象外。
+
+### 4.10 運営ログアウト
+
+`POST /api/v1/operator/logout`
+
+レスポンス:
+```json
+{
+  "loggedOut": true
+}
+```
+
+処理:
+- D1 `operator_sessions.revoked_at` を更新し、正データを先に失効させる。
+- `op:session:cache:v1:{sessionId}` を削除（失敗時は短時間リトライ後に継続）。
+- D1 `operator_session_events` に `LOGOUT` を記録。
+
 ---
 
 ## 5. D1データベース設計
@@ -325,6 +385,8 @@ Q3は2段階:
 - `operator_actions`
 - `operator_credentials`
 - `operator_sessions`
+- `operator_session_events`
+- `idempotency_keys`
 
 ### 5.2 進捗状態モデル
 
@@ -334,6 +396,8 @@ Q3は2段階:
   - `Q1_1_FIRST | Q1_2_FIRST`
 - `users.current_unlocked_subquestion`
   - `Q1_1 | Q1_2 | NULL`
+- `users.state_version`
+  - 更新ごとに +1 する単調増加バージョン
 
 ### 5.3 DDL
 
@@ -341,6 +405,7 @@ Q3は2段階:
 CREATE TABLE IF NOT EXISTS users (
   group_id TEXT PRIMARY KEY,
   current_stage TEXT NOT NULL DEFAULT 'START',
+  state_version INTEGER NOT NULL DEFAULT 0,
   q1_order TEXT,
   current_unlocked_subquestion TEXT,
   q1_1_answer_correct INTEGER NOT NULL DEFAULT 0,
@@ -425,7 +490,29 @@ CREATE TABLE IF NOT EXISTS operator_sessions (
   session_id TEXT PRIMARY KEY,
   operator_id TEXT NOT NULL,
   expires_at TEXT NOT NULL,
+  revoked_at TEXT,
   created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS operator_session_events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  session_id TEXT NOT NULL,
+  operator_id TEXT NOT NULL,
+  event_type TEXT NOT NULL, -- LOGIN_SUCCESS | LOGOUT | REVOKED | EXPIRED | CACHE_MISS
+  metadata_json TEXT,
+  created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS idempotency_keys (
+  idempotency_key TEXT NOT NULL,
+  group_id TEXT NOT NULL,
+  api_name TEXT NOT NULL,
+  response_json TEXT NOT NULL,
+  status_code INTEGER NOT NULL,
+  created_at TEXT NOT NULL,
+  expires_at TEXT NOT NULL,
+  PRIMARY KEY (group_id, api_name, idempotency_key),
+  FOREIGN KEY(group_id) REFERENCES users(group_id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_users_current_stage ON users(current_stage);
@@ -435,6 +522,9 @@ CREATE INDEX IF NOT EXISTS idx_attempt_group_stage_created ON attempt_logs(group
 CREATE INDEX IF NOT EXISTS idx_hint_group_stage_created ON hint_logs(group_id, stage, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_operator_actions_group_created ON operator_actions(group_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_operator_sessions_expires ON operator_sessions(expires_at);
+CREATE INDEX IF NOT EXISTS idx_operator_session_events_session_created ON operator_session_events(session_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_idempotency_group_created ON idempotency_keys(group_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_idempotency_expires ON idempotency_keys(expires_at);
 ```
 
 ### 5.4 Q1順序割当ロジック
@@ -449,37 +539,92 @@ if (!user.q1_order) {
 }
 ```
 
+### 5.5 更新系トランザクションの疑似コード
+
+```ts
+async function handleMutation(req) {
+  const idemKey = req.headers.get("X-Idempotency-Key");
+  const cached = await d1.getIdempotency(req.groupId, req.apiName, idemKey);
+  if (cached) return cached;
+
+  const user = await d1.getUser(req.groupId);
+  const next = transition(user, req.payload); // state machine validation
+
+  await d1.transaction(async (tx) => {
+    const updated = await tx.updateUserWithVersion(
+      req.groupId,
+      user.stateVersion,
+      next
+    );
+    if (!updated) throw new ConflictStateError("STALE_VERSION");
+    await tx.insertProgressLogs(...);
+    await tx.insertAttemptLog(...);
+    await tx.insertIdempotency(req.groupId, req.apiName, idemKey, response, ttl30days);
+  });
+
+  await kv.increment(`dash:version:v1`);
+  return response;
+}
+```
+
+### 5.6 データ保持期間と削除ポリシー
+
+- 保持期間は以下すべて30日:
+  - `idempotency_keys`
+  - `attempt_logs`
+  - `hint_logs`
+  - `user_progress_logs`
+  - `operator_actions`
+  - `operator_session_events`
+- 日次バッチで `created_at` または `expires_at` が30日を超えた行を削除する。
+- 削除ジョブ失敗時は次回バッチで再試行し、運営向けアラートを発報する。
+
 ---
 
-## 6. KV設計（参照最適化）
+## 6. KV設計（参照最適化 + セッションキャッシュ）
 
 ### 6.1 用途
 
 - 運営ダッシュボード一覧キャッシュ
 - グループ詳細の短期キャッシュ
 - ルックアップ設定（チェックポイント設定など）
+- 運営セッションキャッシュ（`op:session:cache:v1:{sessionId}`）
+
+非用途（禁止）:
+- 参加者進捗の正データ保存
+- 回答重複排除（冪等管理）
+- 運営セッション正データ保存
 
 ### 6.2 キー命名
 
-- `dash:list:v1:{cursor}:{limit}`
-- `dash:group:v1:{groupId}`
+- `dash:version:v1`
+- `dash:list:v2:{version}:{cursor}:{limit}`
+- `dash:group:v2:{groupId}:{version}`
 - `cfg:checkpoint:v1:{checkpointCode}`
+- `op:session:cache:v1:{sessionId}`
 
 ### 6.3 TTL
 
 - ダッシュボード一覧: 15秒
 - グループ詳細: 10秒
 - 固定設定値: 10分
+- 運営セッションキャッシュ: 5分
 
 ### 6.4 無効化戦略
 
-以下イベントで `dash:*` を削除:
+以下イベントで `dash:version:v1` をインクリメント:
 - 進捗更新（回答正解、チェックポイント完了、ステージ遷移）
 - 運営手動補正
 - 報告済み更新
 
+以下イベントで `op:session:cache:*` を削除:
+- ログアウト
+- 強制失効
+- セキュリティインシデント対応での全失効
+
 補足:
-- 削除失敗時も処理継続（最悪TTLで自然回復）
+- すべて `retry_then_continue`（短時間リトライ後に継続）
+- セッション失効は必ず先にD1 `operator_sessions.revoked_at` を更新する
 
 ---
 
@@ -503,7 +648,12 @@ if (!user.q1_order) {
   - `SameSite=Strict`
   - `Path=/operator`
 - 有効期限: 12時間
-- サーバ側セッションは `operator_sessions` に保存
+- セッション正データはD1 `operator_sessions` に保存し、KV `op:session:cache:v1:{sessionId}` は読み取りキャッシュとして扱う
+- D1は `operator_session_events` を保持し、監査に利用
+- 認可判定フロー:
+  1. KVキャッシュ参照
+  2. KVミス/不整合時はD1 `operator_sessions` を参照し、キャッシュ再構築
+  3. D1上で `revoked_at` または `expires_at` 条件に一致したら拒否
 
 ### 7.3 参加者保護
 
@@ -564,6 +714,7 @@ if (!user.q1_order) {
 
 ### 9.3 可用性
 
+- 想定ピーク同時接続: 50（参加者 + 運営合計）
 - Workers障害時のフォールバック文言表示
 - 一時失敗時の指数バックオフ再試行（最大2回）
 - 監視指標:
@@ -590,9 +741,9 @@ if (!user.q1_order) {
 
 ### 10.2 環境変数/シークレット
 
-- `OPERATOR_PASSWORD_HASH_B64`（初期運用で必要なら）
-- `OPERATOR_PASSWORD_SALT_B64`
-- `OPERATOR_PASSWORD_ITERATIONS`
+- `OPERATOR_PASSWORD_HASH_B64`（初回シード時のみ。通常認証はD1 `operator_credentials` を参照）
+- `OPERATOR_PASSWORD_SALT_B64`（初回シード時のみ）
+- `OPERATOR_PASSWORD_ITERATIONS`（初回シード時のみ）
 - `SESSION_SIGNING_KEY`
 - `RATE_LIMIT_SECRET`
 
