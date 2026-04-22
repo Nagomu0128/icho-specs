@@ -27,7 +27,7 @@
 
 ログイン成功時:
 
-1. 乱数 `session_id` を生成
+1. 署名付きランダム `session_id` を生成
 2. D1 `operator_sessions` へ保存
 3. KV `op:session:cache:v1:{sessionId}` へキャッシュ（TTL 5分）
 4. Cookie `operator_session` を発行
@@ -46,7 +46,7 @@ Cookie属性:
 順序固定:
 
 1. KV参照
-2. ミス時にD1参照してキャッシュ再構築
+2. KVミスまたは不整合時にD1参照してキャッシュ再構築
 3. `revoked_at` または `expires_at` なら拒否（401）
 
 `CACHE_MISS` 発生時は `operator_session_events` に記録。
@@ -66,6 +66,8 @@ Cookie属性:
 - `mark-reported`
 
 さらに `users.state_version` 条件付き更新を必須化し、競合時は `409 CONFLICT_STATE`。
+同一キー同時到着の競合で `409 CONFLICT_STATE` が発生する場合を許容し、クライアントは最新進捗再取得後に同一操作を再送する。
+`POST /api/v1/operator/login` と `POST /api/v1/operator/logout` は本ルールの対象外。
 
 ## 7. ダッシュボード一覧
 
@@ -74,14 +76,33 @@ Cookie属性:
 - KVキー: `dash:list:v2:{version}:{cursor}:{limit}`
 - ミス時D1で取得しKVへ再構築
 - `nextCursor` を返す
+- レスポンス要素は `groupId`, `currentStage`, `attemptCountTotal`, `hintCountTotal`, `updatedAt` を含む
 
-## 8. 運営画面ルートガード
+## 8. グループ詳細/補正APIのI/O
+
+`GET /api/v1/operator/group/:groupId`:
+
+- `groupId`, `currentStage`, `stateVersion`, 回答/チェックポイント進捗、監査表示用の最新ログ要約を返す
+
+`POST /api/v1/operator/group/:groupId/status-correction`:
+
+- リクエスト: `fromStage`, `toStage`, `reasonCode`, `note`
+- レスポンス: `updated`, `currentStage`
+- 成功時に `operator_actions` へ監査ログを書き込む
+
+`POST /api/v1/operator/group/:groupId/mark-reported`:
+
+- リクエスト: `reasonCode`, `note`
+- レスポンス: `updated`, `reported`
+- 成功時に `operator_actions` へ監査ログを書き込む
+
+## 9. 運営画面ルートガード
 
 - `/operator/*` は認証必須
 - 未認証・期限切れ・失効は401
 - UI側はログイン画面へ遷移し、再認証後に元画面復帰
 
-## 9. テスト観点
+## 10. テスト観点
 
 - ログイン成功時にD1/KV/Cookie/Eventが揃う
 - 失効済セッションで401

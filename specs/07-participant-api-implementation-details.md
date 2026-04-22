@@ -17,6 +17,11 @@
 - `GET /api/v1/progress`
 - `POST /api/v1/complete/epilogue-viewed`
 
+Q3 API方針:
+
+- 実装上の正規エンドポイントは `POST /api/v1/q3/keyword` と `POST /api/v1/q3/code` を採用する
+- `POST /api/v1/:stage/answer` は採用しない（`q2` と `q4` は個別エンドポイントで扱う）
+
 ## 2. Route実装配置
 
 `app/routes/api.v1.*` に配置し、ルーティングと入力検証だけを担当する。
@@ -65,8 +70,9 @@
 更新成功時は必ず以下を同一トランザクション内で書く。
 
 - `user_progress_logs`
-- 必要に応じ `attempt_logs`
+- `attempt_logs`（回答送信はすべて記録）
 - `idempotency_keys`
+- ヒントAPI実装時は `hint_logs` にユーザー入力と応答全文を記録
 
 ## 7. KV連携
 

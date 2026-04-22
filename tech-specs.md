@@ -256,7 +256,7 @@ rrWorker --> arMock[MockArUiState]
 
 ### 4.4 Q2/Q3/Q4回答系（共通）
 
-`POST /api/v1/:stage/answer`（`stage` は `q2|q3|q4`）
+`POST /api/v1/q2/answer` / `POST /api/v1/q4/answer`
 
 レスポンス共通:
 ```json
@@ -609,7 +609,7 @@ async function handleMutation(req) {
   - `operator_actions`
   - `operator_session_events`
 - 日次バッチで `created_at` または `expires_at` が30日を超えた行を削除する。
-- 削除ジョブ失敗時は次回バッチで再試行し、運営向けアラートを発報する。
+- 削除ジョブ失敗時は次回バッチで再試行し、失敗内容を運用ログに記録する（通知は行わない）。
 
 ---
 

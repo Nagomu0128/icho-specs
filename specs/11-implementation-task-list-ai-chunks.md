@@ -20,6 +20,8 @@
 14. CI（lint/type/unit/integration/terraform plan）実装（`10`）
 15. deploy workflow（dev/stg/prod）実装（`10`）
 16. E2E主要シナリオ追加（`10`）
+17. 非機能SLO計測（p95/同時接続）と監視指標ダッシュボード整備（`10`）
+18. モバイル実機受け入れ（通常導線/低速回線/NFCフォールバック）実施（`10`）
 
 ## 2. 1タスクの投入サイズ目安
 

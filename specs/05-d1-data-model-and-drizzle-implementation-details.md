@@ -50,6 +50,7 @@ db/schema/
 - `expiresAt: text`
 - `revokedAt: text nullable`
 - `createdAt: text`
+- 単一運営アカウント制約として `operatorId = operator` を常に維持
 
 ## 4. enum値固定
 
@@ -107,3 +108,7 @@ db/schema/
 - ローカル開発向けテスト `users` を任意投入
 
 seed実行は `dev` のみ自動、`stg/prod` は手動承認。
+
+運営認証のドメイン制約:
+
+- `operator_sessions.operator_id` と `operator_session_events.operator_id` は常に `operator` を記録する
