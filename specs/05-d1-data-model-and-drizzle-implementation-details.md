@@ -27,6 +27,7 @@ db/schema/
 ### users
 
 - `groupId: text primary key`
+- 形式: `g_` + `UUIDv4`（小文字ハイフン区切り）
 - `currentStage: text`（enum相当）
 - `stateVersion: integer not null default 0`
 - `q1Order: text nullable`

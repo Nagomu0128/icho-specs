@@ -23,6 +23,11 @@
 
 入力検証は `zod` で行い、UseCaseへは正規化済DTOのみ渡す。
 
+`groupId` 形式:
+
+- `g_` + `UUIDv4`（小文字ハイフン区切り）を採用
+- 受け入れ正規表現: `^g_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`
+
 ## 3. UseCase分割
 
 `src/application/usecases/participant/`:

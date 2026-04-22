@@ -690,8 +690,8 @@ async function handleMutation(req) {
 
 ### 7.3 参加者保護
 
-- `groupId` は `g_` + `nanoid(22)`（URL-safe英数字）で発行する
-- 有効文字種は `A-Za-z0-9_-`、総当たり耐性を担保するため128bit相当以上の乱数強度を維持する
+- `groupId` は `g_` + `UUIDv4`（小文字ハイフン区切り）で発行する
+- 形式は `^g_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` を許可する
 - サーバ側状態遷移検証を必須化
 
 ### 7.4 認証エラー時の挙動
@@ -720,10 +720,12 @@ async function handleMutation(req) {
   - D1向け型安全クエリ
 - `drizzle-kit`
   - マイグレーション生成
-- `nanoid`
-  - セッションID・リクエストID生成
 - `@cloudflare/workers-types`
   - Workers環境のTypeScript型
+
+識別子生成:
+- `crypto.randomUUID()`
+  - `groupId` / `sessionId` / `requestId` の生成に利用
 
 注記:
 - Node.js依存の重いネイティブライブラリは避ける。
