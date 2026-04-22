@@ -63,7 +63,6 @@
 - migration差分の確認
 - secrets注入漏れ確認
 - `SESSION_SIGNING_KEY` のローテーション計画確認
-- rate limit設定確認
 
 ## 6. ロールバック
 

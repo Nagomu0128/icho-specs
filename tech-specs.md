@@ -175,7 +175,6 @@ rrWorker --> arMock[MockArUiState]
 - `FORBIDDEN`
 - `NOT_FOUND`
 - `CONFLICT_STATE`
-- `TOO_MANY_REQUESTS`
 - `INTERNAL_ERROR`
 
 認証系エラー運用:
@@ -694,9 +693,6 @@ async function handleMutation(req) {
 - `groupId` は `g_` + `nanoid(22)`（URL-safe英数字）で発行する
 - 有効文字種は `A-Za-z0-9_-`、総当たり耐性を担保するため128bit相当以上の乱数強度を維持する
 - サーバ側状態遷移検証を必須化
-- レート制限（同一IP/同一groupId）:
-  - 回答API: 1秒あたり5リクエスト
-  - ログインAPI: 1分あたり5回
 
 ### 7.4 認証エラー時の挙動
 
@@ -726,8 +722,6 @@ async function handleMutation(req) {
   - マイグレーション生成
 - `nanoid`
   - セッションID・リクエストID生成
-- `itty-router-rate-limit`（または同等軽量実装）
-  - Workers上の簡易レート制限
 - `@cloudflare/workers-types`
   - Workers環境のTypeScript型
 
@@ -785,7 +779,6 @@ async function handleMutation(req) {
 - `OPERATOR_PASSWORD_SALT_B64`（初回シード時のみ）
 - `OPERATOR_PASSWORD_ITERATIONS`（初回シード時のみ）
 - `SESSION_SIGNING_KEY`
-- `RATE_LIMIT_SECRET`
 
 ### 10.3 デプロイフロー
 

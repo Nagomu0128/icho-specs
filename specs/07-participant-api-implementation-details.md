@@ -63,25 +63,18 @@
 - 必要に応じ `attempt_logs`
 - `idempotency_keys`
 
-## 7. レート制限
-
-回答系API:
-
-- 同一IP/同一groupIdで 1秒あたり5リクエスト
-- 超過時 `TOO_MANY_REQUESTS`（429）
-
-## 8. KV連携
+## 7. KV連携
 
 更新成功後:
 
 - `dash:version:v1` をインクリメント
 - 失敗時は短時間リトライ後に継続（D1 commitを取り消さない）
 
-## 9. 画面ルートとの接続
+## 8. 画面ルートとの接続
 
 `GET /start/:groupId`, `GET /q*` 画面は `loader` で `GET /api/v1/progress` 相当の状態を参照し、未解放画面は `CONFLICT_STATE` を返す。
 
-## 10. テスト観点（integration）
+## 9. テスト観点（integration）
 
 - 同一Idempotency-Key二重送信で同一応答
 - 競合更新で片方が `CONFLICT_STATE`

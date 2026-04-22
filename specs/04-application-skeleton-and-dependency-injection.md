@@ -39,7 +39,6 @@ src/
 - `CACHE: KVNamespace`
 - `ENV: string`
 - `SESSION_SIGNING_KEY: string`
-- `RATE_LIMIT_SECRET: string`
 
 任意（初期シード時のみ）:
 
@@ -72,7 +71,6 @@ src/
 
 - `withRequestId`（`X-Request-Id` 生成/透過）
 - `withErrorHandling`（`AppError` -> APIエラー形式）
-- `withRateLimit`（回答系・ログイン系）
 - `withOperatorAuth`（operator API向け）
 
 ## 6. APIレスポンス整形

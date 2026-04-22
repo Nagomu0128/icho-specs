@@ -26,7 +26,7 @@ icho-specs/
     shared/                    # 共通型・Result・エラー
   workers/
     bindings/                  # Env型・Binding取得ヘルパ
-    middleware/                # 認証・レート制限・requestId
+    middleware/                # 認証・requestId
   db/
     schema/                    # Drizzle schema(ts)
     migrations/                # SQL migration
@@ -82,7 +82,6 @@ icho-specs/
 - `FORBIDDEN`
 - `NOT_FOUND`
 - `CONFLICT_STATE`
-- `TOO_MANY_REQUESTS`
 - `INTERNAL_ERROR`
 
 実装上は `AppError` を1つ定義し、`code`, `message`, `httpStatus`, `requestId` を必須にする。
@@ -104,7 +103,7 @@ icho-specs/
 
 1. Terraform基盤（環境分離・最低限リソース）
 2. D1スキーマとDrizzle定義
-3. 共通ミドルウェア（認証・エラー・リクエストID・レート制限）
+3. 共通ミドルウェア（認証・エラー・リクエストID）
 4. 参加者API
 5. 運営認証と運営API
 6. KVキャッシュ最適化
