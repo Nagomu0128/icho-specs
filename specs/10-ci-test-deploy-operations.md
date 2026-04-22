@@ -24,6 +24,8 @@
 
 ### `deploy-prod.yml`（手動）
 
+`workflow_dispatch` + Environment承認を通過した場合のみ実行する。
+
 1. app build
 2. D1 migration apply（prod）
 3. Worker deploy（prod）
