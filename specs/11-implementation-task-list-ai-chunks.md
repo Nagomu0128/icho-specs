@@ -5,7 +5,7 @@
 ## 1. 実装順（依存あり）
 
 1. Terraform module骨格作成（`02`, `03`）
-2. `envs/dev` の `plan/apply` 可能化（`02`, `03`）
+2. `envs/prod` の `plan` 可能化と手動 `apply` フロー整備（`02`, `03`）
 3. D1 schema + migration + Drizzle定義（`05`）
 4. 共通エラー型とmiddleware（`04`）
 5. RequestId + 共通エラーレスポンス整備（`04`）
@@ -18,7 +18,7 @@
 12. KV世代管理 + フォールバック実装（`09`）
 13. 日次クリーンアップJob実装（`09`）
 14. CI（lint/type/unit/integration/terraform plan）実装（`10`）
-15. deploy workflow（dev/stg/prod）実装（`10`）
+15. deploy workflow（prod手動承認）実装（`10`）
 16. E2E主要シナリオ追加（`10`）
 17. 非機能SLO計測（p95/同時接続）と監視指標ダッシュボード整備（`10`）
 18. モバイル実機受け入れ（通常導線/低速回線/NFCフォールバック）実施（`10`）

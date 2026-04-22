@@ -17,7 +17,7 @@
 ## 2. ルートディレクトリ構成
 
 ```text
-icho-specs/
+icho26/
   app/                         # React Router routes / loaders / actions
   src/
     domain/                    # 純粋関数: 状態遷移・正規化・判定
@@ -39,8 +39,6 @@ icho-specs/
       secrets/
       ci_oidc/
     envs/
-      dev/
-      stg/
       prod/
   tests/
     unit/
@@ -88,7 +86,7 @@ icho-specs/
 
 ## 6. 追加で管理対象に含めるべきクラウド要素
 
-ユーザー指定の管理対象（Workers / D1 / KV / Secrets / 環境分離 / CI連携）に加え、初期から次をTerraform管理対象に含める。
+ユーザー指定の管理対象（Workers / D1 / KV / Secrets / CI連携）に加え、初期から次をTerraform管理対象に含める。
 
 - Worker Route / Custom Domain（本番公開時に必要）
 - GitHub Actions用 OIDC 連携（長期鍵レス運用）
@@ -101,16 +99,10 @@ icho-specs/
 
 ## 7. 実装順序（高レベル）
 
-1. Terraform基盤（環境分離・最低限リソース）
+1. Terraform基盤（単一環境運用・最低限リソース）
 2. D1スキーマとDrizzle定義
 3. 共通ミドルウェア（認証・エラー・リクエストID）
 4. 参加者API
 5. 運営認証と運営API
 6. KVキャッシュ最適化
 7. CI/E2E/運用監視
-
-## 8. この後の仕様ファイルの読み方
-
-- `02`〜`10` はそれぞれ単一テーマで実装可能な粒度に分割
-- 1ファイルずつAIに入力しても成立するように、依存関係と実装範囲を冒頭で明示する
-- 先行ファイルの決定事項を後続ファイルで上書きしない

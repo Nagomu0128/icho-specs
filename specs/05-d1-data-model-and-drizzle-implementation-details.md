@@ -107,7 +107,7 @@ db/schema/
 - `operator_credentials` に `operator` の1行を投入
 - ローカル開発向けテスト `users` を任意投入
 
-seed実行は `dev` のみ自動、`stg/prod` は手動承認。
+seed実行は自動化せず、`prod` で手動承認のうえ実行する。
 
 運営認証のドメイン制約:
 

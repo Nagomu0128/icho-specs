@@ -20,21 +20,28 @@
 4. `npm run test:integration`
 5. `terraform fmt -check`（`terraform/`）
 6. `terraform validate`
-7. `terraform plan`（`dev`）
+7. `terraform plan`（`prod`）
 
-### `deploy-dev.yml`（main push）
+### `deploy-prod.yml`（手動）
 
 1. app build
-2. D1 migration apply（dev）
-3. Worker deploy（dev）
+2. D1 migration apply（prod）
+3. Worker deploy（prod）
 4. KV初期設定投入
 5. smoke test
 6. Q1順序固定シナリオのE2E確認
 
-### `deploy-stg-prod.yml`（手動）
+### `post-merge-check.yml`（main push）
 
-- `workflow_dispatch` + environment approval
-- `stg` 完了後に `prod`
+1. app build
+2. smoke test（applyなし）
+3. `terraform plan`（`prod`）で差分再確認
+
+## 2.1 デプロイポリシー（単一環境）
+
+- `prod` への自動applyは禁止
+- `prod` 反映は `workflow_dispatch` + Environment承認後のみ実行
+- 緊急対応時もPR経由で差分レビューと実行ログ記録を必須化
 
 ## 3. テスト構成
 
