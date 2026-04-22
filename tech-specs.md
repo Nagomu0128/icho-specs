@@ -59,6 +59,7 @@ rrWorker --> arMock[MockArUiState]
 - 同一 `groupId` の更新系APIは D1 トランザクション + `state_version` 条件付き更新で整合性を担保する。
 - 進捗の正データはD1のみ。KVは再構築可能な派生状態として扱う。
 - KVミス時は必ずD1フォールバックする。
+- 実装は3層クリーンアーキテクチャを採用し、依存方向を内側（Domain/Application）へ固定する。
 
 ### 2.3 主要データフロー
 
@@ -84,6 +85,25 @@ rrWorker --> arMock[MockArUiState]
   
 補足（将来拡張）:
 - 同時接続増加や競合率上昇で必要になった場合のみ、更新系APIにDurable Objectsを追加する。
+
+### 2.5 3層クリーンアーキテクチャ
+
+レイヤ構成:
+- Presentation層（Route/Controller）:
+  - React Routerの`loader`/`action`でHTTP入出力、認証チェック、DTO変換を担当
+  - UseCase呼び出し以外の業務ロジックを持たない
+- Application層（UseCase）:
+  - 状態遷移、冪等制御、権限判定、トランザクション境界を担当
+  - `SessionRepository` や `ProgressRepository` などの抽象インターフェースに依存
+- Infrastructure層（Repository/External）:
+  - D1/KV/モックHintサービスへのアクセス実装を担当
+  - Drizzle ORMとCloudflare Bindingはこの層に閉じ込める
+
+依存ルール:
+- 実行フローは `Presentation -> Application -> Infrastructure` とする
+- 依存方向は `Presentation -> Application <- Infrastructure` を維持する（Applicationが中心）
+- Application層はCloudflare固有APIへ直接依存しない
+- Domainルール（状態遷移、回答正規化）はApplication層内の純粋関数として実装しテスト可能に保つ
 
 ---
 
@@ -157,6 +177,10 @@ rrWorker --> arMock[MockArUiState]
 - `CONFLICT_STATE`
 - `TOO_MANY_REQUESTS`
 - `INTERNAL_ERROR`
+
+認証系エラー運用:
+- セッション未提示・期限切れ・失効は `UNAUTHORIZED`（HTTP 401）
+- 認証済みだが許可されない操作は `FORBIDDEN`（HTTP 403）
 
 ### 4.1 開始/再開
 
@@ -289,6 +313,7 @@ Q3は2段階:
 ```
 
 補足:
+- 単一運営アカウント方式（`operator_id` は固定値 `operator`）とする
 - サーバでPBKDF2ハッシュ比較
 - 成功時 `operator_session` Cookie発行
 - D1 `operator_sessions` に必ずINSERTし、KVへはキャッシュとして保存
@@ -352,6 +377,7 @@ Q3は2段階:
 補足:
 - 上記更新系APIは `X-Idempotency-Key` 必須。
 - `idempotency_keys` で同一キー重複を判定し、重複時は初回レスポンスを返却。
+- 同一キー同時到着の競合で `409 CONFLICT_STATE` が発生する場合を許容し、クライアントは進捗再取得後に同一操作を再送する。
 - D1反映後に `dash:version:v1` をインクリメントし、世代切替でキャッシュを論理無効化する。
 - `POST /api/v1/operator/group/:groupId/status-correction` と `POST /api/v1/operator/group/:groupId/mark-reported` はWorkersからD1へ `state_version` 条件付き更新を必須とする。
 - `POST /api/v1/operator/login` と `POST /api/v1/operator/logout` は `groupId` を持たないため本ルールの対象外。
@@ -527,6 +553,11 @@ CREATE INDEX IF NOT EXISTS idx_idempotency_group_created ON idempotency_keys(gro
 CREATE INDEX IF NOT EXISTS idx_idempotency_expires ON idempotency_keys(expires_at);
 ```
 
+運営認証のドメイン制約（単一アカウント）:
+- `operator_credentials` は `operator_id = 'operator'` の1行のみを保持する
+- `operator_sessions.operator_id` と `operator_session_events.operator_id` は常に `operator` を記録する
+- 将来マルチアカウント化する場合は、ログイン入力に `operatorId` を追加し互換性を保ったまま拡張する
+
 ### 5.4 Q1順序割当ロジック
 
 擬似コード:
@@ -646,8 +677,9 @@ async function handleMutation(req) {
   - `HttpOnly`
   - `Secure`
   - `SameSite=Strict`
-  - `Path=/operator`
+  - `Path=/`（`/operator` 画面と `/api/v1/operator/*` の双方で送信させる）
 - 有効期限: 12時間
+- 値は署名付きランダム `session_id` のみを保持し、認証状態・権限情報はCookieに保存しない
 - セッション正データはD1 `operator_sessions` に保存し、KV `op:session:cache:v1:{sessionId}` は読み取りキャッシュとして扱う
 - D1は `operator_session_events` を保持し、監査に利用
 - 認可判定フロー:
@@ -657,13 +689,19 @@ async function handleMutation(req) {
 
 ### 7.3 参加者保護
 
-- `groupId` は推測困難ランダム文字列
+- `groupId` は `g_` + `nanoid(22)`（URL-safe英数字）で発行する
+- 有効文字種は `A-Za-z0-9_-`、総当たり耐性を担保するため128bit相当以上の乱数強度を維持する
 - サーバ側状態遷移検証を必須化
 - レート制限（同一IP/同一groupId）:
   - 回答API: 1秒あたり5リクエスト
   - ログインAPI: 1分あたり5回
 
-### 7.4 入力正規化/検証
+### 7.4 認証エラー時の挙動
+
+- 運営APIで未認証/期限切れ/失効セッションを検出した場合は常に `401 UNAUTHORIZED` を返す
+- UIは`401`受信時にログイン画面へリダイレクトし、再認証後に元画面へ復帰させる
+
+### 7.5 入力正規化/検証
 
 - 前後空白除去
 - 全角英数 -> 半角
