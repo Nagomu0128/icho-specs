@@ -64,7 +64,7 @@ rrWorker --> arMock[MockArUiState]
 ### 2.3 主要データフロー
 
 1. 参加者が開始URLへアクセス。`users` レコード作成または再開。  
-2. 参加者の更新系API（回答・checkpoint）はWorkersで `X-Idempotency-Key` を検証。重複なら前回結果を返却。  
+2. `groupId` を伴う更新系API（参加者回答・checkpoint・運営手動補正・報告済み更新）はWorkersで `X-Idempotency-Key` を検証。重複なら前回結果を返却。  
 3. Workersが状態遷移を検証し、D1トランザクションで `users` 更新と監査ログ書き込みを同時に実行（`users.state_version` をインクリメント）。  
 4. 運営手動補正も同様にD1へ `state_version` 条件付きで反映し、`operator_actions` を記録。  
 5. 更新失敗（競合）時は `409 CONFLICT_STATE` を返し、クライアントは最新進捗再取得後に再送する。  
@@ -373,13 +373,15 @@ Q3は2段階:
 - `POST /api/v1/q3/code`
 - `POST /api/v1/q4/answer`
 - `POST /api/v1/complete/epilogue-viewed`
+- `POST /api/v1/operator/group/:groupId/status-correction`
+- `POST /api/v1/operator/group/:groupId/mark-reported`
 
 補足:
 - 上記更新系APIは `X-Idempotency-Key` 必須。
 - `idempotency_keys` で同一キー重複を判定し、重複時は初回レスポンスを返却。
 - 同一キー同時到着の競合で `409 CONFLICT_STATE` が発生する場合を許容し、クライアントは進捗再取得後に同一操作を再送する。
 - D1反映後に `dash:version:v1` をインクリメントし、世代切替でキャッシュを論理無効化する。
-- `POST /api/v1/operator/group/:groupId/status-correction` と `POST /api/v1/operator/group/:groupId/mark-reported` はWorkersからD1へ `state_version` 条件付き更新を必須とする。
+- `POST /api/v1/operator/group/:groupId/status-correction` と `POST /api/v1/operator/group/:groupId/mark-reported` も `X-Idempotency-Key` 必須で、WorkersからD1へ `state_version` 条件付き更新を行う。
 - `POST /api/v1/operator/login` と `POST /api/v1/operator/logout` は `groupId` を持たないため本ルールの対象外。
 
 ### 4.10 運営ログアウト
